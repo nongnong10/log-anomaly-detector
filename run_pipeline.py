@@ -7,6 +7,7 @@ import pandas as pd
 from logparser import Drain
 from bert_pytorch.predict_log import Predictor
 import torch
+import tempfile  # added
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -139,6 +140,7 @@ def init_predictor():
 def run_pipeline(raw_log_path, seq_threshold=0.5, export=False):
     """
     Full pipeline: parse -> sequence -> predict -> summary.
+    Returns summary dict.
     """
     structured_csv = parse_raw_log(raw_log_path)
     sequence_rel_name = build_event_sequences(structured_csv)
@@ -146,20 +148,35 @@ def run_pipeline(raw_log_path, seq_threshold=0.5, export=False):
     result = predictor.predict_file(sequence_rel_name, seq_threshold=seq_threshold)
     is_anomaly = len(result["anomaly_indices"]) > 0
     print(f"[STEP 2] Anomaly detected: {is_anomaly}")
+    summary = {
+        "raw_log": raw_log_path,
+        "sequence_file": os.path.join(OUTPUT_DIR, sequence_rel_name),
+        "total_sequences": result["total_sequences"],
+        "anomalous_sequences": len(result["anomaly_indices"]),
+        "anomaly_ratio": result["anomaly_ratio"],
+        "threshold_ratio": seq_threshold,
+        "is_anomaly": is_anomaly,
+        "anomaly_indices": result.get("anomaly_indices", [])
+    }
     if export:
-        summary = {
-            "raw_log": raw_log_path,
-            "sequence_file": os.path.join(OUTPUT_DIR, sequence_rel_name),
-            "total_sequences": result["total_sequences"],
-            "anomalous_sequences": len(result["anomaly_indices"]),
-            "anomaly_ratio": result["anomaly_ratio"],
-            "threshold_ratio": seq_threshold,
-            "is_anomaly": is_anomaly
-        }
         with open(RESULT_FILE, 'w') as f:
             for k, v in summary.items():
                 f.write(f"{k}: {v}\n")
         print(f"Result exported: {RESULT_FILE}")
+    return summary
+
+def detect_anomaly_from_raw(raw_log_data: str, seq_threshold: float = 0.2):
+    """
+    Endpoint helper: run anomaly detection directly from raw log text.
+    Creates a temporary log file, then reuses run_pipeline.
+    """
+    if not raw_log_data.strip():
+        raise ValueError("Empty raw_log_data provided.")
+    with tempfile.TemporaryDirectory() as td:
+        tmp_log = os.path.join(td, "input.log")
+        with open(tmp_log, 'w') as f:
+            f.write(raw_log_data)
+        return run_pipeline(tmp_log, seq_threshold=seq_threshold, export=False)
 
 def main():
     parser = argparse.ArgumentParser(description="End-to-end log anomaly pipeline")
@@ -173,4 +190,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
