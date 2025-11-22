@@ -5,9 +5,7 @@ import argparse
 import hashlib
 import pandas as pd
 from logparser import Drain
-from bert_pytorch.predict_log import Predictor
-import torch
-import tempfile  # added
+import tempfile
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -135,6 +133,14 @@ def init_predictor():
     for p in [MODEL_PATH, VOCAB_PATH]:
         if not os.path.isfile(p):
             raise FileNotFoundError(f"Required model asset missing: {p}")
+    try:
+        from bert_pytorch.predict_log import Predictor  # local import to delay torch load
+    except Exception as e:
+        raise ImportError(
+            "Failed to import Predictor / torch. If you still see 'libtorch_cpu.so: cannot enable executable stack', "
+            "try: docker run --security-opt seccomp=unconfined ... or use the official PyTorch base image (already applied). "
+            f"Original error: {e}"
+        )
     return Predictor(options)
 
 def run_pipeline(raw_log_path, seq_threshold=0.5, export=False):

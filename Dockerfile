@@ -1,31 +1,29 @@
-FROM python:3.10-slim
+FROM python:3.10
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PYTHONUNBUFFERED=1
 
-# System deps (keep minimal)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libgomp1 \
+    libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Non-root user
-RUN useradd -m appuser
 WORKDIR /app
 
-# Install dependencies first (leverages layer caching)
-COPY requirements.txt ./requirements.txt
-RUN pip install -r requirements.txt
+# Upgrade pip first
+RUN pip install --upgrade pip
 
-# Copy application code
+# Install a supported CPU-only torch (adjust version if needed)
+RUN pip install --no-cache-dir torch==2.2.1 --index-url https://download.pytorch.org/whl/cpu
+
+# Copy and install remaining requirements (ensure requirements.txt does NOT pin old torch)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY . .
-
-# Adjust ownership
-RUN chown -R appuser:appuser /app
+RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
-
-# Default command
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-
