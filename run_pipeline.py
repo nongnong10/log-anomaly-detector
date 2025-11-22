@@ -165,7 +165,7 @@ def main():
     parser = argparse.ArgumentParser(description="End-to-end log anomaly pipeline")
     parser.add_argument("--log", default=os.path.join(PROJECT_ROOT, "dataset", "hdfs", "my_log_data.log"),
                         help="Path to raw HDFS log file")
-    parser.add_argument("--seq_threshold", type=float, default=0.5,
+    parser.add_argument("--seq_threshold", type=float, default=0.2,
                         help="Ratio threshold for sequence anomaly detection")
     parser.add_argument("--export", action="store_true", help="Export summary file")
     args = parser.parse_args()
