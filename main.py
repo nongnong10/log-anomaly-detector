@@ -4,6 +4,7 @@ from run_pipeline import detect_anomaly_from_raw
 import os
 import psycopg2
 from dotenv import load_dotenv
+from api.log_lines import router as log_lines_router
 
 load_dotenv()
 DB_USER = os.getenv("DB_USER")
@@ -13,6 +14,7 @@ DB_PORT = os.getenv("DB_PORT")
 DB_NAME = os.getenv("DB_NAME")
 
 app = FastAPI(title="Log Anomaly Detection API")
+app.include_router(log_lines_router)
 
 @app.on_event("startup")
 def startup_db():
