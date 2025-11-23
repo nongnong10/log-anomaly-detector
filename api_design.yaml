@@ -1,0 +1,187 @@
+openapi: 3.0.0
+info:
+  title: Log Anomaly Detector API
+  version: 1.0.0
+
+paths:
+  /list-log-sequences:
+    get:
+      summary: List log sequences with anomaly score
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+        - in: query
+          name: block_ids
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: List of log sequences
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListLogSequencesResponse"
+
+  /list-log-lines:
+    get:
+      summary: List log lines
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+        - in: query
+          name: block_ids
+          schema:
+            type: array
+            items:
+              type: string
+        - in: query
+          name: level
+          schema:
+            type: string
+            enum: [INFO, WARN, ERROR]
+      responses:
+        "200":
+          description: List of log lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListLogLinesResponse"
+
+  /detect:
+    post:
+      summary: Detect anomalies from raw log input
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DetectRequest"
+      responses:
+        "200":
+          description: Detection result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DetectResponse"
+
+components:
+  schemas:
+
+    # --- List Log Sequences ---
+    ListLogSequencesResponse:
+      type: object
+      properties:
+        log_blocks:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string }
+              time: { type: string }
+              block_id: { type: string }
+              anomaly_score: { type: number }
+              log_lines:
+                type: array
+                items:
+                  $ref: "#/components/schemas/LogLine"
+        pagination:
+          $ref: "#/components/schemas/SequencePagination"
+
+    SequencePagination:
+      type: object
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total_sequences: { type: integer }
+        anomalous_sequences: { type: integer }
+        anomalous_ratio: { type: number }
+
+    # --- List Log Lines ---
+    ListLogLinesResponse:
+      type: object
+      properties:
+        log_lines:
+          type: array
+          items:
+            $ref: "#/components/schemas/LogLine"
+        pagination:
+          $ref: "#/components/schemas/LinesPagination"
+
+    LinesPagination:
+      type: object
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+
+    LogLine:
+      type: object
+      properties:
+        line_id: { type: integer }
+        date: { type: string }
+        time: { type: string }
+        pid: { type: integer }
+        level: { type: string }
+        component: { type: string }
+        event_id: { type: string }
+
+    # --- Detect ---
+    DetectRequest:
+      type: object
+      required: [raw_log_data]
+      properties:
+        raw_log_data: { type: string }
+        seq_threshold: { type: number }
+        adaptive_window:
+          type: boolean
+          default: true
+
+    DetectResponse:
+      type: object
+      properties:
+        anomalous_sequences:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnomalousSequence"
+        summary:
+          $ref: "#/components/schemas/DetectSummary"
+
+    AnomalousSequence:
+      type: object
+      properties:
+        block_id: { type: string }
+        event_sequence:
+          type: array
+          items:
+            $ref: "#/components/schemas/EventSequenceItem"
+
+    EventSequenceItem:
+      type: object
+      properties:
+        content: { type: string }
+        event_id: { type: string }
+        anomaly_score: { type: number }
+        is_anomaly: { type: boolean }
+
+    DetectSummary:
+      type: object
+      properties:
+        anomaly_ratio: { type: number }
+        threshold_ratio: { type: number }
+        is_anomaly: { type: boolean }
+        total_sequences: { type: integer }
+        total_anomalous_sequences: { type: integer }
