@@ -6,6 +6,7 @@ import psycopg2
 from dotenv import load_dotenv
 from api.log_lines import router as log_lines_router
 from api.log_sequences import router as log_sequences_router  # new import
+from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 DB_USER = os.getenv("DB_USER")
@@ -15,6 +16,20 @@ DB_PORT = os.getenv("DB_PORT")
 DB_NAME = os.getenv("DB_NAME")
 
 app = FastAPI(title="Log Anomaly Detection API")
+
+# CORS middleware (adjust origins as needed)
+origins = [
+    "http://localhost:8080",  # Vite dev server
+    "http://127.0.0.1:8080"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(log_lines_router)
 app.include_router(log_sequences_router)  # include new sequences router
 
@@ -79,4 +94,4 @@ def db_health():
         return {"db_status": "connected"}
     return {"db_status": "not_connected"}
 
-# Run with: uvicorn main:app --host 0.0.0.0 --port 8000
+# Run with: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
