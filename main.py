@@ -5,6 +5,7 @@ import os
 import psycopg2
 from dotenv import load_dotenv
 from api.log_lines import router as log_lines_router
+from api.log_sequences import router as log_sequences_router  # new import
 
 load_dotenv()
 DB_USER = os.getenv("DB_USER")
@@ -15,6 +16,7 @@ DB_NAME = os.getenv("DB_NAME")
 
 app = FastAPI(title="Log Anomaly Detection API")
 app.include_router(log_lines_router)
+app.include_router(log_sequences_router)  # include new sequences router
 
 @app.on_event("startup")
 def startup_db():
