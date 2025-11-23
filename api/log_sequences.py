@@ -38,6 +38,7 @@ def list_log_sequences(
     page: int = Query(1, ge=1),
     page_size: int = Query(100, gt=0, le=1000),
     block_ids: List[str] = Query(default=[]),
+    show_log_lines: bool = Query(True),
 ):
     conn = getattr(request.app.state, "db_conn", None)
     if conn is None:
@@ -76,9 +77,9 @@ def list_log_sequences(
                 cur.execute(lbl_sql, selected_block_ids)
                 for b_id, label in cur.fetchall():
                     labels_map[b_id] = label
-            # Step 3: fetch log_lines for these block_ids
+            # Step 3: fetch log_lines for these block_ids (only if show_log_lines)
             log_lines_map: Dict[str, List[LogLineItem]] = {bid: [] for bid in selected_block_ids}
-            if selected_block_ids:
+            if show_log_lines and selected_block_ids:
                 placeholders_lines = ",".join(["%s"] * len(selected_block_ids))
                 lines_sql = (
                     "SELECT line_id, date, time, pid, level, component, event_id, block_id "
