@@ -12,6 +12,7 @@ import hashlib
 from datetime import datetime
 from collections import defaultdict
 import json
+from database.upsert_log_line import upsert_log_lines  # New import
 
 
 class Logcluster:
@@ -329,6 +330,9 @@ class LogParser:
         self.logName = logName
         rootNode = Node()
         logCluL = []
+        blk_pattern = re.compile(r'(blk_-?\d+)')
+        # New: map each LineId -> block_id (single block per line)
+        line_to_block = {}
 
         self.load_data()
 
@@ -344,7 +348,6 @@ class LogParser:
 
             logID = line['LineId']
             logmessageL = self.preprocess(line['Content']).strip().split()
-            # logmessageL = filter(lambda x: x != '', re.split('[\s=:,]', self.preprocess(line['Content'])))
             matchCluster = self.treeSearch(rootNode, logmessageL)
 
             # Match no existing log cluster
@@ -359,7 +362,10 @@ class LogParser:
                 matchCluster.logIDL.append(logID)
                 if ' '.join(newTemplate) != ' '.join(matchCluster.logTemplate):
                     matchCluster.logTemplate = newTemplate
-
+            # Capture first block_id only
+            m = blk_pattern.search(line['Content'])
+            if m:
+                line_to_block[logID] = m.group(1)
             count += 1
             if count % 1000 == 0 or count == len(self.df_log):
                 print('Processed {0:.1f}% of log lines.'.format(count * 100.0 / len(self.df_log)), end='\r')
@@ -367,7 +373,27 @@ class LogParser:
         if not os.path.exists(self.savePath):
             os.makedirs(self.savePath)
 
-        self.outputResult(logCluL)
+        self.outputResult(logCluL)  # Ensures EventId column populated
+
+        # Build per-block log line payloads (DB logic delegated)
+        if db_conn is not None and line_to_block:
+            block_payloads = defaultdict(list)
+            # Iterate rows again to assemble full info after EventId assignment
+            for _, row in self.df_log.iterrows():
+                bid = line_to_block.get(row['LineId'])
+                if not bid:
+                    continue
+                block_payloads[bid].append({
+                    'pid': row.get('Pid') or row.get('PID'),
+                    'level': row.get('Level', 'INFO'),
+                    'component': row.get('Component', 'UNKNOWN'),
+                    'content': row.get('Content', ''),
+                    'event_id': row.get('EventId', '')
+                })
+            # Upsert each block via helper (all SQL lives in upsert_log_line.py)
+            for bid, lines in block_payloads.items():
+                upsert_log_lines(db_conn, bid, lines)
+            print(f"\nUpserted {sum(len(v) for v in block_payloads.values())} log lines across {len(block_payloads)} blocks.")
 
         print('Parsing done. [Time taken: {!s}]'.format(datetime.now() - start_time))
 

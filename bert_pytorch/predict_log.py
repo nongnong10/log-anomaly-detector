@@ -488,7 +488,7 @@ class Predictor():
             "anomaly_indices": anomaly_indices,
             "anomaly_ratio": (len(anomaly_indices)/len(results)) if results else 0,
             "threshold_ratio": seq_threshold,
-            "results": results
+            "results": results  # This ensures detailed per-sequence results are available
         }
 
     def predict_file_v2(self, file_name, seq_threshold=0.5):
@@ -534,4 +534,3 @@ class Predictor():
             "threshold_ratio": seq_threshold,
             "results": results
         }
-

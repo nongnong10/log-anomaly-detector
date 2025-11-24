@@ -164,16 +164,6 @@ components:
       type: object
       properties:
         block_id: { type: string }
-        event_sequence:
-          type: array
-          items:
-            $ref: "#/components/schemas/EventSequenceItem"
-
-    EventSequenceItem:
-      type: object
-      properties:
-        content: { type: string }
-        event_id: { type: string }
         anomaly_score: { type: number }
         is_anomaly: { type: boolean }
 
@@ -182,6 +172,5 @@ components:
       properties:
         anomaly_ratio: { type: number }
         threshold_ratio: { type: number }
-        is_anomaly: { type: boolean }
         total_sequences: { type: integer }
         total_anomalous_sequences: { type: integer }
