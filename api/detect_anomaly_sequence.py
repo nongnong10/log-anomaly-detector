@@ -7,7 +7,7 @@ import pandas as pd
 from logparser import Drain
 import tempfile
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # ---- Configuration paths (adjust if layout differs) ----
 OUTPUT_DIR = os.path.join(PROJECT_ROOT, 'output', 'hdfs')
@@ -148,12 +148,19 @@ def run_pipeline(raw_log_path, seq_threshold=0.5, export=False):
     Full pipeline: parse -> sequence -> predict -> summary.
     Returns summary dict.
     """
+    # Step 1: Parse raw log to structured CSV
     structured_csv = parse_raw_log(raw_log_path)
+
+    # Step 2: Build event sequences
     sequence_rel_name = build_event_sequences(structured_csv)
+
+    # Step 3: Predict anomalies
     predictor = init_predictor()
     result = predictor.predict_file(sequence_rel_name, seq_threshold=seq_threshold)
+
+    # Step 4: Summarize results
     is_anomaly = len(result["anomaly_indices"]) > 0
-    print(f"[STEP 2] Anomaly detected: {is_anomaly}")
+    print(f"==== Anomaly detected: {is_anomaly}")
     summary = {
         "raw_log": raw_log_path,
         "sequence_file": os.path.join(OUTPUT_DIR, sequence_rel_name),

@@ -1,6 +1,6 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from run_pipeline import detect_anomaly_from_raw
+from api.detect_anomaly_sequence import detect_anomaly_from_raw
 import os
 import psycopg2
 from dotenv import load_dotenv
