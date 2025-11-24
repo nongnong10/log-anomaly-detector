@@ -490,3 +490,48 @@ class Predictor():
             "threshold_ratio": seq_threshold,
             "results": results
         }
+
+    def predict_file_v2(self, file_name, seq_threshold=0.5):
+        model = torch.load(self.model_path, map_location=self.device)
+        model.to(self.device)
+        model.eval()
+        print('model_path: {}'.format(self.model_path))
+        start_time = time.time()
+        vocab = WordVocab.load_vocab(self.vocab_path)
+        scale = None
+        error_dict = None
+        if self.is_time:
+            with open(self.scale_path, "rb") as f:
+                scale = pickle.load(f)
+            with open(self.model_dir + "error_dict.pkl", 'rb') as f:
+                error_dict = pickle.load(f)
+        if self.hypersphere_loss:
+            center_dict = torch.load(self.model_dir + "best_center.pt", map_location=self.device)
+            self.center = center_dict["center"]
+            self.radius = center_dict["radius"]
+        print("Start predicting")
+        results, errors = self.helper(model, self.output_dir, file_name, vocab, scale, error_dict)
+        # Identify anomalies per sequence
+        anomaly_indices = []
+        for i, r in enumerate(results):
+            if r["masked_tokens"] == 0:
+                continue
+            logkey_cond = self.is_logkey and r["undetected_tokens"] > r["masked_tokens"] * seq_threshold
+            time_cond = self.is_time and r["num_error"] > r["masked_tokens"] * seq_threshold
+            svdd_cond = self.hypersphere_loss_test and r["deepSVDD_label"]
+            if logkey_cond or time_cond or svdd_cond:
+                anomaly_indices.append(i)
+                print(f"[ANOMALY] seq {i}: undetected={r['undetected_tokens']}/{r['masked_tokens']}, total_logkey={r['total_logkey']}, deepSVDD={r['deepSVDD_label']}")
+        print(f"Total sequences: {len(results)}, anomalies: {len(anomaly_indices)}, anomaly_ratio: {(len(anomaly_indices)/len(results)) if results else 0:.4f}")
+        # print("errors: ", errors)
+        elapsed_time = time.time() - start_time
+        print('elapsed_time: {}'.format(elapsed_time))
+        return {
+            "file": file_name,
+            "total_sequences": len(results),
+            "anomaly_indices": anomaly_indices,
+            "anomaly_ratio": (len(anomaly_indices)/len(results)) if results else 0,
+            "threshold_ratio": seq_threshold,
+            "results": results
+        }
+

@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from api.detect_anomaly_sequence import detect_anomaly_from_raw
+from api.detect_anomaly_sequence_v2 import detect_anomaly_from_raw_v2  # updated import
 import os
 import psycopg2
 from dotenv import load_dotenv
@@ -78,6 +79,19 @@ def detect(req: DetectRequest):
     # If you need the cursor: cursor = getattr(app.state, "db_cursor", None)
     try:
         summary = detect_anomaly_from_raw(req.raw_log_data, seq_threshold=req.seq_threshold)
+        return summary
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {e}")
+
+@app.post("/v2/detect")
+def detect(req: DetectRequest):
+    try:
+        conn = getattr(app.state, "db_conn", None)
+        summary = detect_anomaly_from_raw_v2(req.raw_log_data, seq_threshold=req.seq_threshold, db_conn=conn)
         return summary
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
