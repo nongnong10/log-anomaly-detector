@@ -1,21 +1,22 @@
 from fastapi import APIRouter, Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Dict
+from datetime import datetime  # added
 
 router = APIRouter()
 
 class LogLineItem(BaseModel):
     line_id: int
-    date: str | None = None
-    time: str | None = None
+    created_at: datetime | None = None  # replaced date
+    updated_at: datetime | None = None  # replaced time
     pid: int | None = None
     level: str | None = None
     component: str | None = None
     event_id: str | None = None
 
 class LogBlockItem(BaseModel):
-    date: str | None = None
-    time: str | None = None
+    created_at: datetime | None = None  # replaced date
+    updated_at: datetime | None = None  # replaced time
     block_id: str
     is_anomaly: bool
     anomaly_score: float
@@ -43,7 +44,6 @@ def list_log_sequences(
     conn = getattr(request.app.state, "db_conn", None)
     if conn is None:
         raise HTTPException(status_code=503, detail="DB not connected")
-    offset = (page - 1) * page_size
     # Step 1: page block_ids from log_block (only where has_data = TRUE)
     where_conditions = ["has_data = TRUE"]
     params: List = []
@@ -59,8 +59,12 @@ def list_log_sequences(
         "WHERE a.label='Anomaly' AND lb.has_data = TRUE"
         + ("" if not block_ids else f" AND a.block_id IN ({','.join(['%s']*len(block_ids))})")
     )
-    page_sql = "SELECT block_id FROM log_block" + where_clause + " LIMIT %s OFFSET %s"
-    page_params = params + [page_size, offset]
+    page_sql = (
+        "SELECT block_id, created_at, updated_at FROM log_block"
+        + where_clause
+        + " ORDER BY updated_at DESC LIMIT %s OFFSET %s"
+    )
+    page_params = params + [page_size, (page - 1) * page_size]
     try:
         with conn.cursor() as cur:
             cur.execute(total_sql, params)
@@ -68,7 +72,9 @@ def list_log_sequences(
             cur.execute(anomalous_count_sql, ([] if not block_ids else block_ids))
             anomalous_sequences = cur.fetchone()[0]
             cur.execute(page_sql, page_params)
-            selected_block_ids = [r[0] for r in cur.fetchall()]
+            page_rows = cur.fetchall()
+            selected_block_ids = [r[0] for r in page_rows]
+            block_meta = {r[0]: (r[1], r[2]) for r in page_rows}  # block_id -> (created_at, updated_at)
             # Step 2: labels for paged block_ids
             labels_map: Dict[str, str] = {bid: "Normal" for bid in selected_block_ids}
             if selected_block_ids:
@@ -82,16 +88,17 @@ def list_log_sequences(
             if show_log_lines and selected_block_ids:
                 placeholders_lines = ",".join(["%s"] * len(selected_block_ids))
                 lines_sql = (
-                    "SELECT line_id, date, time, pid, level, component, event_id, block_id "
-                    f"FROM log_line WHERE block_id IN ({placeholders_lines}) ORDER BY line_id"
+                    "SELECT line_id, created_at, updated_at, pid, level, component, event_id, block_id "
+                    f"FROM log_line WHERE block_id IN ({placeholders_lines}) "
+                    "ORDER BY updated_at DESC, line_id ASC"
                 )
                 cur.execute(lines_sql, selected_block_ids)
                 for r in cur.fetchall():
                     log_lines_map[r[7]].append(
                         LogLineItem(
                             line_id=r[0],
-                            date=r[1],
-                            time=r[2],
+                            created_at=r[1],
+                            updated_at=r[2],
                             pid=r[3],
                             level=r[4],
                             component=r[5],
@@ -102,19 +109,17 @@ def list_log_sequences(
         raise HTTPException(status_code=500, detail=f"Query failed: {e}")
     log_blocks: List[LogBlockItem] = []
     for bid in selected_block_ids:
-        lines = log_lines_map.get(bid, [])
-        date_val = lines[0].date if lines else None
-        time_val = lines[0].time if lines else None
+        created_at_val, updated_at_val = block_meta.get(bid, (None, None))
         is_anomaly = labels_map.get(bid) == "Anomaly"
         anomaly_score = 1.0 if is_anomaly else 0.0
         log_blocks.append(
             LogBlockItem(
-                date=date_val,
-                time=time_val,
+                created_at=created_at_val,
+                updated_at=updated_at_val,
                 block_id=bid,
                 is_anomaly=is_anomaly,
                 anomaly_score=anomaly_score,
-                log_lines=lines,
+                log_lines=log_lines_map.get(bid, []),
             )
         )
     anomalous_ratio = (anomalous_sequences / total_sequences) if total_sequences else 0.0

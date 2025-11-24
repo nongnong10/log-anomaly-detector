@@ -90,8 +90,8 @@ components:
           items:
             type: object
             properties:
-              date: { type: string }
-              time: { type: string }
+              created_at: { type: string }  # replaced date
+              updated_at: { type: string }  # replaced time
               block_id: { type: string }
               anomaly_score: { type: number }
               log_lines:
@@ -132,8 +132,8 @@ components:
       type: object
       properties:
         line_id: { type: integer }
-        date: { type: string }
-        time: { type: string }
+        created_at: { type: string }  # replaced date
+        updated_at: { type: string }  # replaced time
         pid: { type: integer }
         level: { type: string }
         component: { type: string }

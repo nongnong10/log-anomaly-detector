@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Query, HTTPException, Request
 from pydantic import BaseModel
 from typing import List
+from datetime import datetime  # added
 
 router = APIRouter()
 
 class LogLineItem(BaseModel):
     line_id: int
-    date: str | None = None
-    time: str | None = None
+    created_at: datetime | None = None  # changed type from str to datetime
+    updated_at: datetime | None = None  # changed type from str to datetime
     pid: int | None = None
     level: str | None = None
     component: str | None = None
@@ -36,7 +37,7 @@ def list_log_lines(
     offset = (page - 1) * page_size
 
     base_count_sql = "SELECT COUNT(*) FROM log_line"
-    base_select_sql = """SELECT line_id, date, time, pid, level, component, event_id, block_id
+    base_select_sql = """SELECT line_id, created_at, updated_at, pid, level, component, event_id, block_id
                          FROM log_line"""
     params: List = []
     if block_ids:
@@ -45,7 +46,7 @@ def list_log_lines(
         base_count_sql += where_clause
         base_select_sql += where_clause
         params.extend(block_ids)
-    select_sql = base_select_sql + " ORDER BY line_id LIMIT %s OFFSET %s"
+    select_sql = base_select_sql + " ORDER BY updated_at DESC, line_id ASC LIMIT %s OFFSET %s"  # updated ordering
     params_select = params + [page_size, offset]
 
     try:
@@ -63,8 +64,8 @@ def list_log_lines(
     log_lines = [
         LogLineItem(
             line_id=r[0],
-            date=r[1],
-            time=r[2],
+            created_at=r[1],  # now datetime
+            updated_at=r[2],  # now datetime
             pid=r[3],
             level=r[4],
             component=r[5],
@@ -77,4 +78,3 @@ def list_log_lines(
         log_lines=log_lines,
         pagination=PaginationMeta(page=page, page_size=page_size, total=total),
     )
-
