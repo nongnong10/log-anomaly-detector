@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 import hashlib
 from datetime import datetime
+from collections import defaultdict
+import json
 
 
 class Logcluster:
@@ -274,6 +276,54 @@ class LogParser:
         return clusters
 
     def parse(self, logName, previous_templates_csv=None, previous_structured_csv=None):
+        print('Parsing file: ' + os.path.join(self.path, logName))
+        start_time = datetime.now()
+        self.logName = logName
+        rootNode = Node()
+        logCluL = []
+
+        self.load_data()
+
+        # Warm start: load old clusters (ignore previous_structured_csv)
+        if previous_templates_csv:
+            old_clusters = self.load_previous_clusters(previous_templates_csv)
+            for c in old_clusters:
+                logCluL.append(c)
+                self.addSeqToPrefixTree(rootNode, c)
+
+        count = 0
+        for idx, line in self.df_log.iterrows():
+
+            logID = line['LineId']
+            logmessageL = self.preprocess(line['Content']).strip().split()
+            # logmessageL = filter(lambda x: x != '', re.split('[\s=:,]', self.preprocess(line['Content'])))
+            matchCluster = self.treeSearch(rootNode, logmessageL)
+
+            # Match no existing log cluster
+            if matchCluster is None:
+                newCluster = Logcluster(logTemplate=logmessageL, logIDL=[logID])
+                logCluL.append(newCluster)
+                self.addSeqToPrefixTree(rootNode, newCluster)
+
+            # Add the new log message to the existing cluster
+            else:
+                newTemplate = self.getTemplate(logmessageL, matchCluster.logTemplate)
+                matchCluster.logIDL.append(logID)
+                if ' '.join(newTemplate) != ' '.join(matchCluster.logTemplate):
+                    matchCluster.logTemplate = newTemplate
+
+            count += 1
+            if count % 1000 == 0 or count == len(self.df_log):
+                print('Processed {0:.1f}% of log lines.'.format(count * 100.0 / len(self.df_log)), end='\r')
+
+        if not os.path.exists(self.savePath):
+            os.makedirs(self.savePath)
+
+        self.outputResult(logCluL)
+
+        print('Parsing done. [Time taken: {!s}]'.format(datetime.now() - start_time))
+
+    def parse_and_store_log_lines(self, logName, previous_templates_csv=None, previous_structured_csv=None, db_conn=None):
         print('Parsing file: ' + os.path.join(self.path, logName))
         start_time = datetime.now()
         self.logName = logName
