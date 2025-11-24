@@ -82,6 +82,7 @@ def build_event_sequences_v2(structured_csv, db_conn=None):
 
     blk_regex = re.compile(r'(blk_-?\d+)')
     block_map = {}
+    block_event_ids = {}  # Store original EventIds for database
     for r in rows:
         eid = r.get('EventId')
         if not eid:
@@ -92,6 +93,7 @@ def build_event_sequences_v2(structured_csv, db_conn=None):
         blk_ids = set(blk_regex.findall(r.get('Content', '')))
         for b in blk_ids:
             block_map.setdefault(b, []).append(mapped)
+            block_event_ids.setdefault(b, []).append(eid)
 
     seq_path = os.path.join(OUTPUT_DIR, SEQUENCE_FILENAME)
     with open(seq_path, 'w') as f:
@@ -101,8 +103,8 @@ def build_event_sequences_v2(structured_csv, db_conn=None):
 
                 # Upsert to database if connection provided
                 if db_conn:
-                    # Convert sequence to hex strings for database storage
-                    event_sequence = [format(event_id, '08x') for event_id in seq]
+                    # Use original EventId values for database storage
+                    event_sequence = block_event_ids[block_id]
                     has_data = True
                     anomaly_score = 0.0  # Default score, will be updated after prediction
 
@@ -138,7 +140,7 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None)
 
     # Step 3: Predict anomalies
     predictor = init_predictor()
-    result = predictor.predict_file(sequence_rel_name, seq_threshold=seq_threshold)
+    result = predictor.predict_file_v2(sequence_rel_name, seq_threshold=seq_threshold)
 
     # Step 4: Summarize results
     is_anomaly = len(result["anomaly_indices"]) > 0
