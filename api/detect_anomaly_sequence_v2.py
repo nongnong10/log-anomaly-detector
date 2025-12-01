@@ -10,6 +10,7 @@ from .detect_anomaly_sequence import init_predictor
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.upsert_log_block import upsert_log_block, batch_upsert_log_blocks
+from .notifiy_slack import send_slack_alert
 
 # Global variables to store block mappings for anomaly score updates
 BLOCK_EVENT_IDS = {}
@@ -209,6 +210,10 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None)
         }
         if is_anomaly:
             anomalous_sequences.append(seq_obj)
+            try:
+                send_slack_alert(block_id, anomaly_score, is_anomaly)
+            except Exception as e:
+                print(f"[run_pipeline_v2] send_slack_alert failed for {block_id}: {e}")
         else:
             normal_sequences.append(seq_obj)
 
