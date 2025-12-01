@@ -60,7 +60,7 @@ def list_log_sequences(
         + ("" if not block_ids else f" AND a.block_id IN ({','.join(['%s']*len(block_ids))})")
     )
     page_sql = (
-        "SELECT block_id, created_at, updated_at FROM log_block"
+        "SELECT block_id, anomaly_score, created_at, updated_at FROM log_block"
         + where_clause
         + " ORDER BY updated_at DESC LIMIT %s OFFSET %s"
     )
@@ -74,7 +74,11 @@ def list_log_sequences(
             cur.execute(page_sql, page_params)
             page_rows = cur.fetchall()
             selected_block_ids = [r[0] for r in page_rows]
-            block_meta = {r[0]: (r[1], r[2]) for r in page_rows}  # block_id -> (created_at, updated_at)
+            # block_meta maps block_id -> dict with anomaly_score, created_at, updated_at
+            block_meta = {
+                r[0]: {"anomaly_score": r[1], "created_at": r[2], "updated_at": r[3]}
+                for r in page_rows
+            }
             # Step 2: labels for paged block_ids
             labels_map: Dict[str, str] = {bid: "Normal" for bid in selected_block_ids}
             if selected_block_ids:
@@ -109,9 +113,16 @@ def list_log_sequences(
         raise HTTPException(status_code=500, detail=f"Query failed: {e}")
     log_blocks: List[LogBlockItem] = []
     for bid in selected_block_ids:
-        created_at_val, updated_at_val = block_meta.get(bid, (None, None))
+        meta = block_meta.get(bid, {})
+        created_at_val = meta.get("created_at")
+        updated_at_val = meta.get("updated_at")
+        db_anomaly_score = meta.get("anomaly_score")
         is_anomaly = labels_map.get(bid) == "Anomaly"
-        anomaly_score = 1.0 if is_anomaly else 0.0
+        # If DB anomaly_score is NULL/None, use old flow (is_anomaly => 1.0 else 0.0).
+        if db_anomaly_score is None:
+            anomaly_score = 1.0 if is_anomaly else 0.0
+        else:
+            anomaly_score = float(db_anomaly_score)
         log_blocks.append(
             LogBlockItem(
                 created_at=created_at_val,
