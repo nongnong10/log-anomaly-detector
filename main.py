@@ -40,22 +40,66 @@ app.include_router(log_sequences_router)  # include new sequences router
 
 @app.on_event("startup")
 def startup_db():
-    try:
-        conn = psycopg2.connect(
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST,
-            port=DB_PORT,
-            dbname=DB_NAME,
-            sslmode="require",
-        )
-        cursor = conn.cursor()
-        cursor.execute("SELECT 1;")
-        print("DB connection successful.")
+    """
+    Attempt to connect using DB_HOST (e.g. supabase). If that fails,
+    attempt a fallback using LOCAL_DB_HOST (default: localhost) with
+    LOCAL_DB_USER / LOCAL_DB_PASSWORD / LOCAL_DB_NAME; if those are not
+    provided, fall back to defaults:
+      host = localhost
+      user = postgres
+      password = 123456
+      dbname = log_anomaly_detector
+    """
+    primary_host = DB_HOST
+    primary_user = DB_USER
+    primary_password = DB_PASSWORD
+    primary_port = DB_PORT
+    primary_dbname = DB_NAME
+
+    # Local fallback settings (can be provided in .env)
+    fallback_host = os.getenv("LOCAL_DB_HOST", "localhost")
+    fallback_user = os.getenv("LOCAL_DB_USER", "postgres")
+    fallback_password = os.getenv("LOCAL_DB_PASSWORD", "123456")
+    fallback_port = os.getenv("LOCAL_DB_PORT", primary_port or "5432")
+    fallback_dbname = os.getenv("LOCAL_DB_NAME", "log_anomaly_detector")
+
+    conn = None
+    cursor = None
+
+    def try_connect(host, user, password, port, dbname):
+        try:
+            c = psycopg2.connect(
+                user=user,
+                password=password,
+                host=host,
+                port=port,
+                dbname=dbname,
+                sslmode="require" if host != "localhost" and host != "127.0.0.1" else "disable",
+            )
+            cur = c.cursor()
+            cur.execute("SELECT 1;")
+            return c, cur
+        except Exception as e:
+            print(f"DB connect attempt to host={host} user={user} db={dbname} failed: {e}")
+            return None, None
+
+    # Try Supabase / primary host first then Try local fallback
+    # conn, cursor = try_connect(primary_host, primary_user, primary_password, primary_port, primary_dbname)
+    # if conn is None:
+    #     print(f"Primary DB host {primary_host} failed, attempting fallback host {fallback_host}")
+    #     conn, cursor = try_connect(fallback_host, fallback_user, fallback_password, fallback_port, fallback_dbname)
+    conn, cursor = try_connect(fallback_host, fallback_user, fallback_password, fallback_port, fallback_dbname)
+
+
+    if conn and cursor:
+        used_host = cursor.connection.get_dsn_parameters().get("host")
+        used_user = cursor.connection.get_dsn_parameters().get("user")
+        used_db = cursor.connection.get_dsn_parameters().get("dbname")
+        print(f"DB connection successful (host={used_host} user={used_user} db={used_db})")
         app.state.db_conn = conn
         app.state.db_cursor = cursor
-    except Exception as e:
-        print(f"DB connection failed: {e}")
+    else:
+        print("DB connection failed for both primary and fallback hosts.")
         app.state.db_conn = None
         app.state.db_cursor = None
 
