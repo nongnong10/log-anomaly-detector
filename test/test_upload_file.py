@@ -6,11 +6,31 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from google.oauth2.credentials import Credentials
 from dotenv import load_dotenv
+from fastapi.middleware.cors import CORSMiddleware
 import io
+
+from pydantic import BaseModel
 
 load_dotenv()
 
 app = FastAPI()
+# CORS middleware (adjust origins as needed)
+origins = [
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://192.168.1.5:5173",
+    "https://log-anomaly-detectio-dy6d.bolt.host"
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 CLIENT_SECRETS_FILE = "oauth_client_secret.json"
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
@@ -89,3 +109,58 @@ async def upload_file_to_drive(
     ).execute()
 
     return uploaded
+
+# Pydantic model cho input JSON
+class CreateFileRequest(BaseModel):
+    title: str
+    content: str
+    folder_id: str = None  # optional, nếu muốn tạo trong folder cụ thể
+
+@app.post("/create-file")
+def create_file(request: CreateFileRequest):
+    if "access_token" not in tokens:
+        return JSONResponse({"error": "User not logged in"}, status_code=401)
+
+    # Tạo credentials từ access token
+    creds = Credentials(
+        token=tokens["access_token"],
+        refresh_token=tokens["refresh_token"],
+        client_id=os.getenv("GOOGLE_CLIENT_ID"),
+        client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+        scopes=SCOPES
+    )
+
+    drive_service = build("drive", "v3", credentials=creds)
+
+    # Metadata để tạo file Google Docs
+    file_metadata = {
+        "name": request.title,
+        "mimeType": "application/vnd.google-apps.document"
+    }
+
+    if request.folder_id:
+        file_metadata["parents"] = [request.folder_id]
+
+    # Tạo file Google Docs trống
+    created_file = drive_service.files().create(
+        body=file_metadata,
+        fields="id, name, mimeType, parents"
+    ).execute()
+
+    # Update nội dung file
+    docs_service = build("docs", "v1", credentials=creds)
+    requests = [
+        {
+            "insertText": {
+                "location": {"index": 1},
+                "text": request.content
+            }
+        }
+    ]
+
+    docs_service.documents().batchUpdate(
+        documentId=created_file["id"],
+        body={"requests": requests}
+    ).execute()
+
+    return created_file

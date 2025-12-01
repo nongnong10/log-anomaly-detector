@@ -7,6 +7,9 @@ import psycopg2
 from dotenv import load_dotenv
 from api.log_lines import router as log_lines_router
 from api.log_sequences import router as log_sequences_router  # new import
+from api.create_file import router as create_file_router
+from api.upload_file import router as upload_file_router
+from api.auth import router as auth_router
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
@@ -37,6 +40,9 @@ app.add_middleware(
 )
 app.include_router(log_lines_router)
 app.include_router(log_sequences_router)  # include new sequences router
+app.include_router(create_file_router)
+app.include_router(upload_file_router)
+app.include_router(auth_router)
 
 @app.on_event("startup")
 def startup_db():

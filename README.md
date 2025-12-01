@@ -82,9 +82,11 @@ https://log-anomaly-detector-183907812838.us-central1.run.app/docs
 ```bash
 docker run -d \
         --name some-postgres \
+        --restart=always \
         -e POSTGRES_PASSWORD=123456 \
         -e POSTGRES_USER=postgres \
-        -e POSTGRES_DB=log_anomaly_detector \
         -p 5432:5432 \
         postgres
+        
+docker start some-postgres
 ```
