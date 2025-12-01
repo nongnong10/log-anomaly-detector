@@ -145,10 +145,11 @@ def csv_dict_reader(fh):
     import csv
     return csv.DictReader(fh)
 
-def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None):
+def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None, notify_slack: bool = False):
     """
     Full pipeline: parse -> sequence -> predict -> summary.
     Returns summary dict.
+    notify_slack: if True, send Slack alerts for anomalous sequences
     """
     # Step 1: Parse raw log to structured CSV (now also stores log lines in DB)
     structured_csv = parse_raw_log_v2(raw_log_path, db_conn=db_conn)
@@ -210,10 +211,12 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None)
         }
         if is_anomaly:
             anomalous_sequences.append(seq_obj)
-            try:
-                send_slack_alert(block_id, anomaly_score, is_anomaly)
-            except Exception as e:
-                print(f"[run_pipeline_v2] send_slack_alert failed for {block_id}: {e}")
+            # Only notify Slack if explicitly requested
+            if notify_slack:
+                try:
+                    send_slack_alert(block_id, anomaly_score, is_anomaly)
+                except Exception as e:
+                    print(f"[run_pipeline_v2] send_slack_alert failed for {block_id}: {e}")
         else:
             normal_sequences.append(seq_obj)
 
@@ -236,10 +239,11 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None)
 
     return response
 
-def detect_anomaly_from_raw_v2(raw_log_data: str, seq_threshold: float = 0.2, db_conn=None):
+def detect_anomaly_from_raw_v2(raw_log_data: str, seq_threshold: float = 0.2, db_conn=None, notify_slack: bool = False):
     """
     Endpoint helper: run anomaly detection directly from raw log text.
     Creates a temporary log file, then reuses run_pipeline_v2.
+    notify_slack: if True, send Slack alerts for anomalous sequences
     """
     if not raw_log_data.strip():
         raise ValueError("Empty raw_log_data provided.")
@@ -247,7 +251,7 @@ def detect_anomaly_from_raw_v2(raw_log_data: str, seq_threshold: float = 0.2, db
         tmp_log = os.path.join(td, "input.log")
         with open(tmp_log, 'w') as f:
             f.write(raw_log_data)
-        return run_pipeline_v2(tmp_log, seq_threshold=seq_threshold, export=False, db_conn=db_conn)
+        return run_pipeline_v2(tmp_log, seq_threshold=seq_threshold, export=False, db_conn=db_conn, notify_slack=notify_slack)
 
 def main():
     parser = argparse.ArgumentParser(description="End-to-end log anomaly pipeline")

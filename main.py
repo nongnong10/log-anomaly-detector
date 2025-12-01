@@ -75,7 +75,7 @@ def shutdown_db():
 class DetectRequest(BaseModel):
     raw_log_data: str
     seq_threshold: float = 0.2
-
+    notify_slack: bool = False
 @app.post("/detect")
 def detect(req: DetectRequest):
     # If you need the cursor: cursor = getattr(app.state, "db_cursor", None)
@@ -93,7 +93,7 @@ def detect(req: DetectRequest):
 def detect(req: DetectRequest):
     try:
         conn = getattr(app.state, "db_conn", None)
-        summary = detect_anomaly_from_raw_v2(req.raw_log_data, seq_threshold=req.seq_threshold, db_conn=conn)
+        summary = detect_anomaly_from_raw_v2(req.raw_log_data, seq_threshold=req.seq_threshold, db_conn=conn, notify_slack=req.notify_slack)
         return summary
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
