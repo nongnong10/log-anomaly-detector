@@ -10,6 +10,7 @@ from .detect_anomaly_sequence import init_predictor
 import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database.upsert_log_block import upsert_log_block, batch_upsert_log_blocks
+from database.upsert_anomaly_sequence import batch_upsert_anomaly_sequences
 from .notifiy_slack import send_slack_alert
 
 # Global variables to store block mappings for anomaly score updates
@@ -166,6 +167,7 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None,
     # Step 4: Batch update anomaly scores in database
     if db_conn and BLOCK_ID_LIST:
         batch_data = []
+        batch_anomaly_sequence_data = []
         results = result.get("results", [])
         for i, block_id in enumerate(BLOCK_ID_LIST):
             if i < len(results):
@@ -180,8 +182,11 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None,
             has_data = len(event_sequence) > 0
             batch_data.append((block_id, event_sequence, has_data, anomaly_score))
 
-        if batch_data:
-            success = batch_upsert_log_blocks(db_conn, batch_data)
+            label = "Anomaly" if anomaly_score >= seq_threshold else "Normal"
+            batch_anomaly_sequence_data.append((block_id, label))
+
+        if batch_data and batch_anomaly_sequence_data:
+            success = batch_upsert_log_blocks(db_conn, batch_data) and batch_upsert_anomaly_sequences(db_conn, batch_anomaly_sequence_data)
             if success:
                 print(f"Batch updated anomaly_score for {len(batch_data)} blocks")
             else:
