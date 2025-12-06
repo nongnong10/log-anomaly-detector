@@ -14,6 +14,7 @@ class LogLineItem(BaseModel):
     component: str | None = None
     event_id: str | None = None
     block_id: str | None = None
+    content: str | None = None
 
 class PaginationMeta(BaseModel):
     page: int
@@ -37,7 +38,7 @@ def list_log_lines(
     offset = (page - 1) * page_size
 
     base_count_sql = "SELECT COUNT(*) FROM log_line"
-    base_select_sql = """SELECT line_id, created_at, updated_at, pid, level, component, event_id, block_id
+    base_select_sql = """SELECT line_id, created_at, updated_at, pid, level, component, event_id, block_id, content
                          FROM log_line"""
     params: List = []
     if block_ids:
@@ -71,6 +72,7 @@ def list_log_lines(
             component=r[5],
             event_id=r[6],
             block_id=r[7],
+            content=r[8],
         )
         for r in rows
     ]
