@@ -40,6 +40,7 @@ def list_log_sequences(
     page_size: int = Query(100, gt=0, le=1000),
     block_ids: List[str] = Query(default=[]),
     show_log_lines: bool = Query(True),
+    filter_anomalies: bool = Query(False),
 ):
     conn = getattr(request.app.state, "db_conn", None)
     if conn is None:
@@ -51,6 +52,9 @@ def list_log_sequences(
         placeholders = ",".join(["%s"] * len(block_ids))
         where_conditions.append(f"block_id IN ({placeholders})")
         params.extend(block_ids)
+    # If filter_anomalies is True, constrain to anomalous block_ids
+    if filter_anomalies:
+        where_conditions.append("block_id IN (SELECT block_id FROM anomaly_sequence WHERE label='Anomaly')")
     where_clause = " WHERE " + " AND ".join(where_conditions)
     total_sql = "SELECT COUNT(*) FROM log_block" + where_clause
     anomalous_count_sql = (
@@ -69,8 +73,12 @@ def list_log_sequences(
         with conn.cursor() as cur:
             cur.execute(total_sql, params)
             total_sequences = cur.fetchone()[0]
-            cur.execute(anomalous_count_sql, ([] if not block_ids else block_ids))
-            anomalous_sequences = cur.fetchone()[0]
+            if filter_anomalies:
+                # When filtering anomalies, anomalous count equals total in the filtered set
+                anomalous_sequences = total_sequences
+            else:
+                cur.execute(anomalous_count_sql, ([] if not block_ids else block_ids))
+                anomalous_sequences = cur.fetchone()[0]
             cur.execute(page_sql, page_params)
             page_rows = cur.fetchall()
             selected_block_ids = [r[0] for r in page_rows]
