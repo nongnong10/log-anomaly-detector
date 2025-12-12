@@ -12,6 +12,8 @@ import hashlib
 from datetime import datetime
 from collections import defaultdict
 import json
+
+from database.get_events import get_all_event_templates
 from database.upsert_log_line import upsert_log_lines  # New import
 
 
@@ -324,48 +326,68 @@ class LogParser:
 
         print('Parsing done. [Time taken: {!s}]'.format(datetime.now() - start_time))
 
-    def parse_and_store_log_lines(self, logName, previous_templates_csv=None, previous_structured_csv=None, db_conn=None):
+    def parse_and_store_log_lines(self, logName, warm_start=None, db_conn=None):
         print('Parsing file: ' + os.path.join(self.path, logName))
         start_time = datetime.now()
         self.logName = logName
         rootNode = Node()
         logCluL = []
         blk_pattern = re.compile(r'(blk_-?\d+)')
-        # New: map each LineId -> block_id (single block per line)
         line_to_block = {}
+        anomaly_line = {}
+        anomaly_template = []
+        block_ids = []
 
         self.load_data()
 
-        # Warm start: load old clusters (ignore previous_structured_csv)
-        if previous_templates_csv:
-            old_clusters = self.load_previous_clusters(previous_templates_csv)
-            for c in old_clusters:
-                logCluL.append(c)
-                self.addSeqToPrefixTree(rootNode, c)
+        # 1. Warm start to load old clusters
+        event_templates = []
+        if warm_start is not None and warm_start:
+            event_templates = get_all_event_templates(db_conn)
+            for event in event_templates:
+                template_tokens = self.preprocess(event.event_template).strip().split()
+                match_cluster = self.treeSearch(rootNode, template_tokens)
+                # print(f"Cluster {match_cluster}: Message {template_tokens}")
+                if match_cluster is None:
+                    new_cluster = Logcluster(logTemplate=template_tokens, logIDL=[])
+                    logCluL.append(new_cluster)
+                    self.addSeqToPrefixTree(rootNode, new_cluster)
 
         count = 0
+        # 2. Check if any log line is anomaly by clustering content template
         for idx, line in self.df_log.iterrows():
-
+            # print(f"=== Line {line['LineId']}: {line['Content']}")
+            # print(f"Preprocess log: {self.preprocess(line['Content'])}")
+            # print(f"Tokens: {self.preprocess(line['Content']).strip().split()} ")
             logID = line['LineId']
             logmessageL = self.preprocess(line['Content']).strip().split()
             matchCluster = self.treeSearch(rootNode, logmessageL)
-
+            # print(f"Cluster {matchCluster}: Message {logmessageL}")
             # Match no existing log cluster
             if matchCluster is None:
-                newCluster = Logcluster(logTemplate=logmessageL, logIDL=[logID])
-                logCluL.append(newCluster)
-                self.addSeqToPrefixTree(rootNode, newCluster)
-
-            # Add the new log message to the existing cluster
+                print(f"[ANOMALY LOG LINE]: Message {logmessageL}")
+                anomaly_line[logID] = True
+                new_cluster = Logcluster(logTemplate=logmessageL, logIDL=[logID])
+                logCluL.append(new_cluster)
+                anomaly_template.append(new_cluster)
+                self.addSeqToPrefixTree(rootNode, new_cluster)
             else:
-                newTemplate = self.getTemplate(logmessageL, matchCluster.logTemplate)
-                matchCluster.logIDL.append(logID)
-                if ' '.join(newTemplate) != ' '.join(matchCluster.logTemplate):
-                    matchCluster.logTemplate = newTemplate
+                if matchCluster in anomaly_template:
+                    print(f"[ANOMALY LOG LINE]: Message {logmessageL}")
+                    anomaly_line[logID] = True
+                    matchCluster.logIDL.append(logID)
+                else:
+                    newTemplate = self.getTemplate(logmessageL, matchCluster.logTemplate)
+                    matchCluster.logIDL.append(logID)
+                    if ' '.join(newTemplate) != ' '.join(matchCluster.logTemplate):
+                        matchCluster.logTemplate = newTemplate
+
             # Capture first block_id only
             m = blk_pattern.search(line['Content'])
             if m:
                 line_to_block[logID] = m.group(1)
+                if m.group(1) not in block_ids:
+                    block_ids.append(m.group(1))
             count += 1
             if count % 1000 == 0 or count == len(self.df_log):
                 print('Processed {0:.1f}% of log lines.'.format(count * 100.0 / len(self.df_log)), end='\r')
@@ -383,12 +405,14 @@ class LogParser:
                 bid = line_to_block.get(row['LineId'])
                 if not bid:
                     continue
+                print(f"Log line {row['LineId']} - is_anomaly: {anomaly_line.get(row['LineId'])}")
                 block_payloads[bid].append({
                     'pid': row.get('Pid') or row.get('PID'),
                     'level': row.get('Level', 'INFO'),
                     'component': row.get('Component', 'UNKNOWN'),
                     'content': row.get('Content', ''),
-                    'event_id': row.get('EventId', '')
+                    'event_id': row.get('EventId', ''),
+                    'is_anomaly': anomaly_line.get(row['LineId'], False)
                 })
             # Upsert each block via helper (all SQL lives in upsert_log_line.py)
             for bid, lines in block_payloads.items():
@@ -396,6 +420,7 @@ class LogParser:
             print(f"\nUpserted {sum(len(v) for v in block_payloads.values())} log lines across {len(block_payloads)} blocks.")
 
         print('Parsing done. [Time taken: {!s}]'.format(datetime.now() - start_time))
+        return block_ids
 
     def parse_to_event_sequences(self, log_file, templates_csv, mapping_json, sequence_output_path):
         """

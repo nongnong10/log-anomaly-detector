@@ -16,12 +16,20 @@ def upsert_log_lines(connection, block_id, log_lines):
 
         # Begin transaction
         cursor.execute("BEGIN;")
+        seq_query = """
+                    SELECT setval(
+                           pg_get_serial_sequence('log_line', 'line_id'),
+                           (SELECT COALESCE(MAX(line_id), 0) FROM log_line)
+                    );
+                    """
+        cursor.execute(seq_query)
 
         # Step 1: Delete existing log lines for block_id
         delete_query = """
         DELETE FROM log_line
         WHERE block_id = %s;
         """
+        print("Delete successfully")
         cursor.execute(delete_query, (block_id,))
         deleted_count = cursor.rowcount
 
@@ -35,10 +43,11 @@ def upsert_log_lines(connection, block_id, log_lines):
             event_id,
             block_id,
             created_at,
-            updated_at
+            updated_at,
+            is_anomaly
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, NOW(), NOW()
+            %s, %s, %s, %s, %s, %s, NOW(), NOW(), %s
         );
         """
 
@@ -59,7 +68,8 @@ def upsert_log_lines(connection, block_id, log_lines):
                 log_line.get('component', 'UNKNOWN'),
                 log_line.get('content', ''),
                 log_line.get('event_id', ''),
-                block_id
+                block_id,
+                log_line.get('is_anomaly', False)
             ))
 
         # Execute batch insert

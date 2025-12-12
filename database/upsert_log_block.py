@@ -23,14 +23,14 @@ def upsert_log_block(connection, block_id, event_sequence, has_data, anomaly_sco
         )
         ON CONFLICT (block_id)
         DO UPDATE SET
-            event_sequence = EXCLUDED.event_sequence,
-            has_data = EXCLUDED.has_data,
+            event_sequence = COALESCE(EXCLUDED.event_sequence, log_block.event_sequence),
+            has_data = COALESCE(EXCLUDED.has_data, log_block.has_data),
             anomaly_score = EXCLUDED.anomaly_score,
             updated_at = NOW();
         """
 
-        # Execute query with rounded anomaly_score for consistency
-        cursor.execute(query, (block_id, event_sequence, has_data, round(anomaly_score, 6)))
+        rounded_score = round(anomaly_score, 6) if anomaly_score is not None else None
+        cursor.execute(query, (block_id, event_sequence, has_data, rounded_score))
         connection.commit()
 
         cursor.close()
@@ -73,17 +73,16 @@ def batch_upsert_log_blocks(connection, block_data):
         )
         ON CONFLICT (block_id)
         DO UPDATE SET
-            event_sequence = EXCLUDED.event_sequence,
-            has_data = EXCLUDED.has_data,
+            event_sequence = COALESCE(EXCLUDED.event_sequence, log_block.event_sequence),
+            has_data = COALESCE(EXCLUDED.has_data, log_block.has_data),
             anomaly_score = EXCLUDED.anomaly_score,
             updated_at = NOW();
         """
 
-        # Prepare data with rounded anomaly scores
-        prepared_data = [
-            (block_id, event_sequence, has_data, round(anomaly_score, 6))
-            for block_id, event_sequence, has_data, anomaly_score in block_data
-        ]
+        prepared_data = []
+        for block_id, event_sequence, has_data, anomaly_score in block_data:
+            rounded = round(anomaly_score, 6) if anomaly_score is not None else None
+            prepared_data.append((block_id, event_sequence, has_data, rounded))
 
         # Execute batch upsert
         cursor.executemany(query, prepared_data)

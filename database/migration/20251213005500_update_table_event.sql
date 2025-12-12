@@ -1,0 +1,2 @@
+ALTER TABLE log_line
+ADD COLUMN is_anomaly BOOLEAN DEFAULT FALSE;

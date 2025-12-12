@@ -4,6 +4,8 @@ import json
 import argparse
 import hashlib
 import pandas as pd
+
+from database.get_log_lines import count_anomaly_log_lines, get_log_lines
 from logparser import Drain
 import tempfile
 from .detect_anomaly_sequence import init_predictor
@@ -43,6 +45,7 @@ def parse_raw_log_v2(raw_log_path, db_conn=None):
     If db_conn provided, also store log lines in database by block_id.
     Returns the structured CSV file path.
     """
+    global BLOCK_ID_LIST
     if not os.path.isfile(raw_log_path):
         raise FileNotFoundError(f"Raw log not found: {raw_log_path}")
     if not os.path.isfile(TEMPLATES_CSV):
@@ -62,9 +65,11 @@ def parse_raw_log_v2(raw_log_path, db_conn=None):
         keep_para=False
     )
     if db_conn:
-        parser.parse_and_store_log_lines(log_file, db_conn=db_conn)
+        print("=== parse_raw_log_v2 - flow parse_and_store_log_lines")
+        BLOCK_ID_LIST = parser.parse_and_store_log_lines(log_file, warm_start=True, db_conn=db_conn)
     else:
-        parser.parse(
+        print("=== parse_raw_log_v2 - flow parse (old flow)")
+    parser.parse(
             log_file,
             previous_templates_csv=TEMPLATES_CSV if os.path.isfile(TEMPLATES_CSV) else None,
             previous_structured_csv=None
@@ -72,7 +77,6 @@ def parse_raw_log_v2(raw_log_path, db_conn=None):
     structured_csv = os.path.join(OUTPUT_DIR, log_file + '_structured.csv')
     if not os.path.isfile(structured_csv):
         raise RuntimeError("Structured CSV not generated.")
-    print(f"[STEP 1] Structured log: {structured_csv}")
     return structured_csv
 
 def build_event_sequences_v2(structured_csv, db_conn=None):
@@ -107,9 +111,6 @@ def build_event_sequences_v2(structured_csv, db_conn=None):
     seq_path = os.path.join(OUTPUT_DIR, SEQUENCE_FILENAME)
 
     # Prepare globals and batch data
-    global BLOCK_EVENT_IDS, BLOCK_ID_LIST
-    BLOCK_EVENT_IDS = {}   # will contain only blocks written to file
-    BLOCK_ID_LIST = []     # only block_id strings, in file order
     batch_data = []
 
     with open(seq_path, 'w') as f:
@@ -118,7 +119,7 @@ def build_event_sequences_v2(structured_csv, db_conn=None):
                 f.write(' '.join(map(str, seq)) + '\n')
 
                 # Collect globals for later mapping and for prediction mapping
-                BLOCK_ID_LIST.append(block_id)
+                # BLOCK_ID_LIST.append(block_id)
                 # Store original EventId sequence for DB storage and later score updates
                 event_sequence = block_event_ids.get(block_id, [])
                 BLOCK_EVENT_IDS[block_id] = event_sequence
@@ -142,6 +143,53 @@ def build_event_sequences_v2(structured_csv, db_conn=None):
     # print(f"[STEP 1] Sequence file: {seq_path}")
     return SEQUENCE_FILENAME  # return relative name for Predictor
 
+
+def build_event_sequences_v3(structured_csv, db_conn=None):
+    """
+    Build block-level event sequences using mapping JSON.
+    Output file: OUTPUT_DIR / SEQUENCE_FILENAME (each line: space-separated event integers).
+    """
+    if not os.path.isfile(MAPPING_JSON):
+        raise FileNotFoundError(f"Mapping JSON not found: {MAPPING_JSON}")
+    with open(MAPPING_JSON, 'r') as f:
+        mapping = json.load(f)  # EventId -> int code
+
+    block_map = {}
+    block_event_ids = {}
+    block_ids = BLOCK_ID_LIST
+    for block_id in block_ids:
+        log_lines = get_log_lines(db_conn, block_id)
+        for log_line in log_lines:
+            mapped = mapping.get(log_line.event_id, -1)
+            if mapped == -1:
+                continue
+            block_map.setdefault(block_id, []).append(mapped)
+            block_event_ids.setdefault(block_id, []).append(log_line.event_id)
+
+    seq_path = os.path.join(OUTPUT_DIR, SEQUENCE_FILENAME)
+    batch_data = []
+
+    with open(seq_path, 'w') as f:
+        for block_id, seq in block_map.items():
+            if seq:
+                f.write(' '.join(map(str, seq)) + '\n')
+                event_sequence = block_event_ids.get(block_id, [])
+                if db_conn:
+                    has_data = len(event_sequence) > 0
+                    anomaly_score = 0.0
+                    batch_data.append((block_id, event_sequence, has_data, anomaly_score))
+
+    # If DB connection provided, perform a single batch upsert for all blocks
+    if db_conn and batch_data:
+        print("batch_upsert_log_blocks sequence for block: ", batch_data)
+        success = batch_upsert_log_blocks(db_conn, batch_data)
+        if success:
+            print(f"Batch upserted {len(batch_data)} blocks to database")
+        else:
+            print("Batch upsert failed for initial log_block insertions")
+    return SEQUENCE_FILENAME  # return relative name for Predictor
+
+
 def csv_dict_reader(fh):
     import csv
     return csv.DictReader(fh)
@@ -153,18 +201,26 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None,
     notify_slack: if True, send Slack alerts for anomalous sequences
     """
     # Step 1: Parse raw log to structured CSV (now also stores log lines in DB)
+    print("==== [STEP 1] Parsing raw log...")
     structured_csv = parse_raw_log_v2(raw_log_path, db_conn=db_conn)
+    print(f"==== [STEP 1] Structured log: {structured_csv} \n")
 
     # Step 2: Build event sequences (initial DB upsert for log_block)
-    sequence_rel_name = build_event_sequences_v2(structured_csv, db_conn=db_conn)
+    print("==== [STEP 2] Building event sequences...")
+    # sequence_rel_name = build_event_sequences_v2(structured_csv, db_conn=db_conn)
+    sequence_rel_name = build_event_sequences_v3(structured_csv, db_conn=db_conn)
+    print(f"==== [STEP 2] Event sequences file: {sequence_rel_name} \n")
 
     # Step 3: Predict anomalies
     predictor = init_predictor()
+    print("==== [STEP 3] Starting prediction...")
     result = predictor.predict_file(sequence_rel_name, seq_threshold=seq_threshold)
-    print("result:", result)
     print("BLOCK_ID_LIST:", BLOCK_ID_LIST)
+    print(f"==== [STEP 3] Prediction result: {result} \n")
 
     # Step 4: Batch update anomaly scores in database
+    anomaly_block_score = {}
+    print("==== [STEP 4] Updating anomaly scores in database...")
     if db_conn and BLOCK_ID_LIST:
         batch_data = []
         batch_anomaly_sequence_data = []
@@ -178,14 +234,19 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None,
             else:
                 anomaly_score = 0.0  # Default score if no result is available
 
-            event_sequence = BLOCK_EVENT_IDS.get(block_id, [])
-            has_data = len(event_sequence) > 0
-            batch_data.append((block_id, event_sequence, has_data, anomaly_score))
+            count_anomaly_log_line = count_anomaly_log_lines(db_conn, block_id)
+            # print(f"Block id {block_id}: {count_anomaly_log_line}")
+            if count_anomaly_log_line.total_anomalous_lines > 0:
+                anomaly_score = count_anomaly_log_line.total_anomalous_lines / count_anomaly_log_line.total_line
+            # print(f"Block id {block_id} anomaly_score: {anomaly_score}")
+            anomaly_block_score[block_id] = anomaly_score
+            batch_data.append((block_id, None, None, anomaly_score))
 
             label = "Anomaly" if anomaly_score >= seq_threshold else "Normal"
             batch_anomaly_sequence_data.append((block_id, label))
 
         if batch_data and batch_anomaly_sequence_data:
+            print("Batch data for log_block:", batch_data)
             success = batch_upsert_log_blocks(db_conn, batch_data) and batch_upsert_anomaly_sequences(db_conn, batch_anomaly_sequence_data)
             if success:
                 print(f"Batch updated anomaly_score for {len(batch_data)} blocks")
@@ -198,16 +259,16 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None,
             print("Empty BLOCK_ID_LIST; nothing to update in DB")
 
     # Step 5: Summarize results in the requested response format
+    print("==== [STEP 5] Summarizing results...")
     results = result.get("results", [])
     anomalous_sequences = []
     normal_sequences = []
     for i, block_id in enumerate(BLOCK_ID_LIST):
-        anomaly_score = 0.0
+        anomaly_score = anomaly_block_score.get(block_id, 0.0)
         if i < len(results):
             res = results[i]
             undetected_tokens = res.get("undetected_tokens", 0)
             masked_tokens = res.get("masked_tokens", 1)
-            anomaly_score = undetected_tokens / masked_tokens
         is_anomaly = anomaly_score >= seq_threshold
         seq_obj = {
             "block_id": block_id,
@@ -226,9 +287,9 @@ def run_pipeline_v2(raw_log_path, seq_threshold=0.5, export=False, db_conn=None,
             normal_sequences.append(seq_obj)
 
     summary = {
-        "anomaly_ratio": result.get("anomaly_ratio", 0),
+        "anomaly_ratio": len(anomalous_sequences) / len(BLOCK_ID_LIST),
         "threshold_ratio": seq_threshold,
-        "total_sequences": result.get("total_sequences", len(BLOCK_ID_LIST)),
+        "total_sequences": len(BLOCK_ID_LIST),
         "total_anomalous_sequences": len(anomalous_sequences)
     }
     response = {
