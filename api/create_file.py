@@ -15,7 +15,7 @@ load_dotenv()
 router = APIRouter()
 SCOPES = ["https://www.googleapis.com/auth/drive.file", "https://www.googleapis.com/auth/documents"]
 TOKEN_STORE = Path("tokens.json")
-
+DEFAULT_FOLDER_ID = "1LfjlIA_VLou2gfIsvt6nYBoXKN_JutTs"
 
 class CreateFileRequest(BaseModel):
     title: str
@@ -89,10 +89,11 @@ def create_file(request: CreateFileRequest):
 
     file_metadata = {
         "name": request.title,
-        "mimeType": "application/vnd.google-apps.document"
+        "mimeType": "application/vnd.google-apps.document",
+        "parents": [DEFAULT_FOLDER_ID],
     }
-    if request.folder_id:
-        file_metadata["parents"] = [request.folder_id]
+    # if request.folder_id:
+    #     file_metadata["parents"] = [request.folder_id]
 
     try:
         created_file = drive_service.files().create(

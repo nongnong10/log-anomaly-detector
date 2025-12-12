@@ -79,6 +79,16 @@ async def upload_file_to_drive(
     Uses SERVICE_ACCOUNT_FILE if set, otherwise uses persisted user tokens in tokens.json.
     Default folder_id used when not provided.
     """
+    filename = file.filename or ""
+    ext = Path(filename).suffix.lower()
+    if ext not in {".txt", ".doc"}:
+        raise HTTPException(status_code=400, detail="Only .txt or .doc files are allowed.")
+    # NEW: set MIME based on extension
+    if ext == ".txt":
+        mime = "text/plain"
+    else:
+        mime = "application/msword"
+
     creds = get_credentials()
     if creds is None:
         raise HTTPException(status_code=401, detail="No credentials available. Set SERVICE_ACCOUNT_FILE or authenticate and store tokens.")
@@ -91,10 +101,11 @@ async def upload_file_to_drive(
     file_content = await file.read()
     file_stream = io.BytesIO(file_content)
 
-    media = MediaIoBaseUpload(file_stream, mimetype=file.content_type or "application/octet-stream", resumable=False)
+    # CHANGED: use validated mime instead of client-provided content type
+    media = MediaIoBaseUpload(file_stream, mimetype=mime, resumable=False)
 
     file_metadata = {
-        "name": file.filename,
+        "name": filename,
         "parents": [folder_id] if folder_id else []
     }
 
@@ -108,4 +119,3 @@ async def upload_file_to_drive(
         raise HTTPException(status_code=500, detail=f"Upload failed: {e}")
 
     return JSONResponse(uploaded)
-
